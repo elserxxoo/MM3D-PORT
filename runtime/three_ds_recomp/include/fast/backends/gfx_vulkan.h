@@ -6,6 +6,10 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #endif
 
+#if defined(__ANDROID__) && !defined(VK_USE_PLATFORM_ANDROID_KHR)
+#define VK_USE_PLATFORM_ANDROID_KHR
+#endif
+
 #include "fast/backends/gfx_rendering_api.h"
 #include "fast/renderer/spirv_cache.h"
 #include "fast/renderer3ds/pica_shader_module_identity.h"

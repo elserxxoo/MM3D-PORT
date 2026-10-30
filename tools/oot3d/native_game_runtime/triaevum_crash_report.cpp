@@ -17,7 +17,9 @@
 #include <vector>
 
 #if defined(__linux__) || defined(__APPLE__)
-#include <execinfo.h>
+#if !defined(__ANDROID__)
+#include <execinfo.h>  // backtrace(): not available on Android API 29
+#endif
 #include <fcntl.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -191,9 +193,13 @@ void FatalSignal(int signal) {
       WriteAll(fd, "\ngame state: ");
       WriteAll(fd, gContext.data());
       WriteAll(fd, "\n\nnative stack trace:\n");
+#if !defined(__ANDROID__)
       std::array<void *, 64> frames{};
       const int count = backtrace(frames.data(), static_cast<int>(frames.size()));
       backtrace_symbols_fd(frames.data(), count, fd);
+#else
+      WriteAll(fd, "(native stack trace unavailable on Android; see logcat)\n");
+#endif
       WriteAll(fd, "\n");
       const std::string tail = "last lines of the log:\n" + LogTail(200);
       WriteAll(fd, tail.c_str());
@@ -202,9 +208,11 @@ void FatalSignal(int signal) {
       WriteAll(2, path.data());
       WriteAll(2, "\n");
     }
+#if !defined(__ANDROID__)
     std::array<void *, 64> frames{};
     const int count = backtrace(frames.data(), static_cast<int>(frames.size()));
     backtrace_symbols_fd(frames.data(), count, 2);
+#endif
   }
   // Then the default action (the window library's own handler hangs the
   // process after a crash instead of ending it).
