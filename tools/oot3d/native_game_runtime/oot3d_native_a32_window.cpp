@@ -41,6 +41,23 @@
 #include "oot3d_native_pica_composition.h"
 #include "oot3d_native_pica_presentation_scheduler.h"
 #include "triaevum_screen_layout.h"
+#if defined(__ANDROID__)
+#include "fast/backends/gfx_android_secondary.h"
+#include "triaevum_android_input.h"
+#include <android/log.h>
+#endif
+
+namespace {
+// True while a secondary display surface (AYN Thor lower screen) is attached.
+// Evaluated where needed: it may change between frames, never within a call.
+inline bool Mm3dSecondaryDisplayActive() noexcept {
+#if defined(__ANDROID__)
+  return Fast::AndroidSecondary::Get().HasWindow.load(std::memory_order_relaxed);
+#else
+  return false;
+#endif
+}
+}  // namespace
 #include "triaevum_crash_report.h"
 #include "oot3d_native_pica_semantic_trace.h"
 #include "oot3d_native_pica_submission.h"
@@ -3135,6 +3152,32 @@ PollNativeA32Input(Fast::Fast3dWindow &window,
   ThreeDsRecomp::Input::SampleSdlController(
       config.ControllerEnabled ? selectedController.Controller : nullptr, host, !hostGuiVisible,
       config.ControllerTouchpadEnabled ? config.ControllerTouchpadIndex : -1, triggerThreshold);
+#if defined(__ANDROID__)
+  {
+    // Built-in gyroscope/accelerometer of the handheld. Android's screen-frame
+    // sensors match SDL's "held in front of you" convention, so the same axis
+    // and unit conversion as the SDL controller path applies. A controller
+    // that reports its own gyroscope keeps priority.
+    const auto &androidMotion = Oot3dNativeGame::GetAndroidDeviceInput();
+    if (androidMotion.motionEnabled.load(std::memory_order_relaxed) &&
+        androidMotion.motionValid.load(std::memory_order_acquire) &&
+        !host.ControllerMotion.GyroscopeValid) {
+      constexpr float kGravity = 9.80665F;
+      constexpr float kRadToDeg = 57.2957795130823208768F;
+      const float gx = androidMotion.gyroX.load(std::memory_order_relaxed);
+      const float gy = androidMotion.gyroY.load(std::memory_order_relaxed);
+      const float gz = androidMotion.gyroZ.load(std::memory_order_relaxed);
+      const float ax = androidMotion.accelX.load(std::memory_order_relaxed);
+      const float ay = androidMotion.accelY.load(std::memory_order_relaxed);
+      const float az = androidMotion.accelZ.load(std::memory_order_relaxed);
+      host.ControllerMotion.GyroscopeDegreesPerSecond = {
+          -gx * kRadToDeg, gy * kRadToDeg, -gz * kRadToDeg};
+      host.ControllerMotion.GyroscopeValid = true;
+      host.ControllerMotion.Accelerometer = {ax / kGravity, -ay / kGravity, az / kGravity};
+      host.ControllerMotion.AccelerometerValid = true;
+    }
+  }
+#endif
   controls.ObserveMotion(host.ControllerMotion);
   pollingState.PendingControllerButtons |= host.ControllerButtons & ~pollingState.PreviousControllerButtons;
   pollingState.PreviousControllerButtons = host.ControllerButtons;
@@ -3275,6 +3318,30 @@ PollNativeA32Input(Fast::Fast3dWindow &window,
       }
     }
   }
+#if defined(__ANDROID__)
+  if (Mm3dSecondaryDisplayActive() && !hostGuiVisible) {
+    // Touch on the secondary display is the 3DS lower screen. It never reaches
+    // the main window (which shows the upper screen only), and the main
+    // window's own pointer never drives the lower screen in this mode.
+    const auto &deviceInput = Oot3dNativeGame::GetAndroidDeviceInput();
+    if (deviceInput.secondaryTouchPressed.load(std::memory_order_acquire)) {
+      const uint32_t secondaryW = deviceInput.secondaryTouchW.load(std::memory_order_relaxed);
+      const uint32_t secondaryH = deviceInput.secondaryTouchH.load(std::memory_order_relaxed);
+      if (secondaryW != 0U && secondaryH != 0U) {
+        const auto secondaryTouch = Oot3dNativeGame::MapHostPointerToNativeA32Touch(
+            static_cast<int32_t>(deviceInput.secondaryTouchX.load(std::memory_order_relaxed)),
+            static_cast<int32_t>(deviceInput.secondaryTouchY.load(std::memory_order_relaxed)),
+            secondaryW, secondaryH, true,
+            Oot3dNativeGame::NativeA32TouchPresentation::NativeLowerScreen320x240);
+        if (secondaryTouch.Inside) {
+          frame.Hid.TouchX = secondaryTouch.X;
+          frame.Hid.TouchY = secondaryTouch.Y;
+          frame.Hid.TouchPressed = true;
+        }
+      }
+    }
+  }
+#endif
   if (!TriAevumLowerScreenTouchRectActive()) {
     // Titles with their own lower-screen layout get shortcut taps in
     // ApplyMm3dMenuButtons, after an input timeline.
@@ -6515,8 +6582,12 @@ void RunOot3dNativeA32Window(const Oot3dNativeGameLaunch &launch) {
         }
         singleScreen.LowerOverlay = lowerOverlay;
       }
+      // Dual-screen (AYN Thor): the lower 3DS screen goes to the secondary
+      // display, so the main window shows the upper screen alone.
       screenPlacements = Oot3dNativeGame::ResolveTriAevumScreenPlacements(
-          screenLayout, width, height, 0.32F,
+          Mm3dSecondaryDisplayActive() ? Oot3dNativeGame::TriAevumScreenLayout::TopOnly
+                                       : screenLayout,
+          width, height, 0.32F,
           Oot3dNativeGame::TriAevumWidescreenEnabled()
               ? static_cast<float>(width) / static_cast<float>(std::max<uint32_t>(height, 1U))
               : 0.0F,
@@ -7771,7 +7842,7 @@ void RunOot3dNativeA32Window(const Oot3dNativeGameLaunch &launch) {
           }
           if (foreignTitle && bottomFramebuffer.has_value() &&
               (screenPlacements.Lower.has_value() ||
-               !screenPlacements.LowerCrops.empty())) {
+               !screenPlacements.LowerCrops.empty() || Mm3dSecondaryDisplayActive())) {
             const uint32_t lowerAddress = bottomFramebuffer->AddressLeft;
             auto &cpuState = lowerScreenCpuStates[lowerAddress];
             auto lower = displayTransfersByOutput.find(lowerAddress);
@@ -8261,6 +8332,47 @@ void RunOot3dNativeA32Window(const Oot3dNativeGameLaunch &launch) {
               }
             }
             }
+#if defined(__ANDROID__)
+            if (Mm3dSecondaryDisplayActive()) {
+              // Whatever the lower screen currently is (CPU-written or last GPU
+              // snapshot) is queued for the secondary display's swapchain.
+              Oot3dNativeGame::Oot3dPicaDisplayTransferSubmission secondary;
+              bool haveSecondary = false;
+              if (cpuState.CpuNewest && cpuState.Uploaded && lowerPhysical.has_value()) {
+                secondary.CompletionId = 1U;
+                secondary.InputPhysicalAddress = *lowerPhysical | 1U;
+                secondary.OutputPhysicalAddress = *lowerPhysical | 1U;
+                secondary.Transfer.InputSize = (lowerRows << 16U) | lowerColumns;
+                secondary.Transfer.OutputSize = (lowerRows << 16U) | lowerColumns;
+                secondary.Transfer.Flags = 0x00001000U;
+                haveSecondary = true;
+              } else if (lastLowerScreenTransfer.has_value()) {
+                if (const auto latestCompletion =
+                        picaPresentationScheduler.LatestSnapshotCompletion(
+                            *lastLowerScreenTransfer,
+                            kVisualInterpolationRenderTargetNamespace)) {
+                  secondary = *lastLowerScreenTransfer;
+                  secondary.CompletionId = *latestCompletion;
+                  haveSecondary = true;
+                }
+              }
+              if (haveSecondary) {
+                std::string secondaryError;
+                if (!Oot3dNativeGame::SubmitOot3dPicaVulkanDisplayTransfer(
+                        api, secondary, true, &secondaryError,
+                        kVisualInterpolationRenderTargetNamespace,
+                        Oot3d::Renderer::PicaPresentationMode::SecondaryScreen)) {
+                  static bool loggedSecondaryError = false;
+                  if (!loggedSecondaryError) {
+                    loggedSecondaryError = true;
+                    __android_log_print(ANDROID_LOG_WARN, "TriAevum",
+                                        "secondary display present failed: %s",
+                                        secondaryError.c_str());
+                  }
+                }
+              }
+            }
+#endif
             // The give-an-item cursor over the lower screen's inset.
             if (mm3dGiveMenu && screenPlacements.Lower.has_value()) {
               constexpr uint32_t kCursorSize = 96U;

@@ -34,6 +34,19 @@ public final class TriAevumActivity extends SDLActivity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        // Dual-screen (secondary display) and motion sensors follow the Activity lifecycle.
+        SecondaryDisplayPresenter.onActivityResume(this);
+        MotionSensorBridge.onActivityResume(this);
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        SecondaryDisplayPresenter.onActivityPause();
+        MotionSensorBridge.onActivityPause();
+    }
+
     @Override protected String[] getLibraries() {
         return new String[] { "SDL2", "triaevum_title_bootstrap", "TriAevum" };
     }

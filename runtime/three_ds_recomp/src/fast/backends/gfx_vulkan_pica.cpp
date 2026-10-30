@@ -6679,6 +6679,13 @@ bool GfxRenderingAPIVulkan::SubmitPicaDisplayTransfer(
             return true;
         }
 
+        if (transfer.PresentationMode ==
+            GfxNativePicaPresentationMode::SecondaryScreen) {
+            // Android dual-screen: the bottom snapshot is presented to the
+            // secondary display swapchain after the main frame is submitted.
+            return QueueNativePicaSecondaryPresent(transfer, error);
+        }
+
         const auto displayFound = mNativePicaDisplayImages.find(
             std::make_pair(transfer.RenderTargetNamespace,
                            transfer.OutputPhysicalAddress));

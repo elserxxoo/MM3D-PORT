@@ -1142,6 +1142,7 @@ void GfxRenderingAPIVulkan::Shutdown() {
         WaitForAllPresents();
         StopPresentWorker();
         vkDeviceWaitIdle(mDevice);
+        DestroySecondaryPresenter();
         StorePipelineCache();
         ShutdownImGuiBackend();
         mSceneSurfaces.Clear();
@@ -2217,6 +2218,7 @@ void GfxRenderingAPIVulkan::EndFrame() {
             "vkQueueSubmit");
     mFrameActive = false;
     mFrameSubmitted = true;
+    RunSecondaryPresentAfterSubmit();
 }
 
 void GfxRenderingAPIVulkan::FinishRender() {

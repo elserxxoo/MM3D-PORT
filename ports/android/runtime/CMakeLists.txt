@@ -25,4 +25,9 @@ endif()
 get_filename_component(root "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 add_subdirectory("${root}" product)
 target_sources(oot3d_native_game PRIVATE android_host.cpp)
-target_include_directories(oot3d_native_game PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
+target_include_directories(oot3d_native_game PRIVATE "${CMAKE_CURRENT_LIST_DIR}"
+    "${root}/tools/oot3d/native_game_runtime"
+    "${root}/runtime/three_ds_recomp/include")
+# ANativeWindow_fromSurface (libandroid) and __android_log_print (liblog) are
+# used by the dual-screen/motion bridge and the secondary Vulkan presenter.
+target_link_libraries(oot3d_native_game PRIVATE android log)

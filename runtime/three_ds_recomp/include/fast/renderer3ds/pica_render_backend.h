@@ -119,6 +119,8 @@ enum class PicaPresentationMode : uint8_t {
     AlphaOverlay,
     // Drawn over what is already in the target, without blending (an inset).
     Opaque,
+    // Android dual-screen: presented to the secondary display's own swapchain.
+    SecondaryScreen,
 };
 
 struct PicaDisplayTransferView {
